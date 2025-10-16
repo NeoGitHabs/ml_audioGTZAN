@@ -48,20 +48,10 @@ model = CheckAudio()
 model.load_state_dict(torch.load('audio_model.pth', map_location=device))
 model.to(device)
 
-# def change_audio(waveform, sample_rate):
-#     if sample_rate != 22050:
-#         resample = transforms.Resample(orig_freq=sample_rate, new_freq=22050)
-#         waveform = resample(torch.tensor(waveform).unsqueeze(0))
-#     input_spectrogram = transform(waveform).squeeze(0)
-#     if input_spectrogram.shape[1] > max_len:
-#         input_spectrogram = input_spectrogram[:, :max_len]
-#     elif input_spectrogram.shape[1] < max_len:
-#         pad_len = max_len - input_spectrogram.shape[1]
-#         input_spectrogram = F.pad(input_spectrogram, (0, pad_len))
-#     return input_spectrogram
 def change_audio(waveform, sample_rate):
     if sample_rate != 22050:
         resample = transforms.Resample(orig_freq=sample_rate, new_freq=22050)
+        # waveform = resample(torch.tensor(waveform).unsqueeze(0))
         waveform = resample(waveform.unsqueeze(0))
     input_spectrogram = transform(waveform).squeeze(0)
     if input_spectrogram.shape[1] > max_len:
