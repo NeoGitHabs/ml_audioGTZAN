@@ -1,12 +1,25 @@
-import io
-import torch
-import uvicorn
-import torch.nn as nn
-import soundfile
-import torch.nn.functional as F
-from torchaudio import transforms
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from torchvision import transforms
+import torchaudio.transforms as T
+import streamlit as st
+from PIL import Image
+import torch.nn as nn
+import torchaudio
+import librosa
+import numpy as np
+import uvicorn
+import tempfile
+import torch
+import io
+import os
 
+
+classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
+
+transform = T.MelSpectrogram(
+     sample_rate = 22050,
+     n_mels = 64
+)
 
 class CheckAudio(nn.Module):
     def __init__(self):
@@ -34,59 +47,66 @@ class CheckAudio(nn.Module):
         return audio
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-transform = transforms.MelSpectrogram(
-     sample_rate = 22050,
-     n_mels = 64
- )
-max_len = 500
-genres = torch.load('label.pth')
-# index_to_label = {label:ind for ind, label in enumerate(genres)}
-index_to_label = {ind: label for ind, label in enumerate(genres)}
-
 model = CheckAudio()
-model.load_state_dict(torch.load('audio_model.pth', map_location=device))
+model.load_state_dict(torch.load('audioGTZAN.pth', map_location=device))
 model.to(device)
+model.eval()
 
-def change_audio(waveform, sample_rate):
-    if sample_rate != 22050:
-        resample = transforms.Resample(orig_freq=sample_rate, new_freq=22050)
-        # waveform = resample(torch.tensor(waveform).unsqueeze(0))
-        waveform = resample(waveform.unsqueeze(0))
-    input_spectrogram = transform(waveform).squeeze(0)
-    if input_spectrogram.shape[1] > max_len:
-        input_spectrogram = input_spectrogram[:, :max_len]
-    elif input_spectrogram.shape[1] < max_len:
-        pad_len = max_len - input_spectrogram.shape[1]
-        input_spectrogram = F.pad(input_spectrogram, (0, pad_len))
-    return input_spectrogram
+st.title('Audio Genre Classifier')
+st.text('Загрузите аудио, и модель попробует её распознать.')
 
+mnist_audio = st.file_uploader('Выберите аудио', type=['wav', 'mp3', 'flac', 'ogg'])
 
-app = FastAPI()
+if not mnist_audio:
+    st.info('Загрузите аудио')
+else:
+    st.audio(mnist_audio)
 
-@app.post('/predict/')
-async def predict_audio(file:UploadFile=File(...)):
-    try:
-        audio = await file.read()
-        if not audio:
-            raise HTTPException(status_code=400, detail='It is error file')
-        waveform, sample_rate = soundfile.read(io.BytesIO(audio), dtype='float32')
-        # waveform = torch.tensor(waveform).T
-        waveform = torch.tensor(waveform, dtype=torch.float32)
-        if waveform.ndim > 1:
-            waveform = waveform.flatten()
+    if st.button('Распознать'):
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+                tmp_file.write(mnist_audio.read())
+                tmp_path = tmp_file.name
 
-        spec = change_audio(waveform, sample_rate).unsqueeze(0).to(device)
+            waveform, sample_rate = librosa.load(tmp_path, sr=22050)
+            waveform = torch.from_numpy(waveform).unsqueeze(0)
+            os.unlink(tmp_path)
 
-        with torch.no_grad():
-            y_prediction = model(spec)
-            prediction_int = torch.argmax(y_prediction, dim=1).item()
-            prediction_class = index_to_label[prediction_int]
-        return {"result": f"Index of class: {prediction_int}, Class name(genre): {prediction_class}"}
+            mel_spec = transform(waveform)
+            mel_spec = mel_spec.mean(dim=0) if mel_spec.dim() == 3 else mel_spec
+            mel_spec = mel_spec.unsqueeze(0).to(device)
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+            with torch.no_grad():
+                y_prediction = model(mel_spec)
+                prediction = y_prediction.argmax(dim=1).item()
+
+            st.success(f'Модель думает, что это: {classes[prediction]}')
+
+        except Exception as e:
+            st.error(f'Ошибка: {str(e)}')
 
 
-if __name__ == '__main__':
-    uvicorn.run(app, host='127.0.0.1', port=8000)
+
+
+# app = FastAPI()
+#
+# @app.post('/predict')
+# async def check_image(file:UploadFile = File(...)):
+#     try:
+#         data = await file.read()
+#         if not data:
+#             raise HTTPException(status_code=400, detail='File not Found')
+#
+#         img = Image.open(io.BytesIO(data))
+#         img_tensor = transform(img).unsqueeze(0).to(device)
+#
+#         with torch.no_grad():
+#             prediction = model(img_tensor)
+#             result = prediction.argmax(dim=1).item()
+#             return {f'class': classes[result]}
+#
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f'{e}')
+#
+# if __name__ == '__main__':
+#     uvicorn.run(app, host='127.0.0.1', port=8000)
