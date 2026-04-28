@@ -52,61 +52,60 @@ model.load_state_dict(torch.load('audioGTZAN.pth', map_location=device))
 model.to(device)
 model.eval()
 
-st.title('Audio Genre Classifier')
-st.text('Загрузите аудио, и модель попробует её распознать.')
 
-mnist_audio = st.file_uploader('Выберите аудио', type=['wav', 'mp3', 'flac', 'ogg'])
+app = FastAPI()
 
-if not mnist_audio:
-    st.info('Загрузите аудио')
-else:
-    st.audio(mnist_audio)
+@app.post('/predict')
+async def check_image(file:UploadFile = File(...)):
+    try:
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail='File not Found')
 
-    if st.button('Распознать'):
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-                tmp_file.write(mnist_audio.read())
-                tmp_path = tmp_file.name
+        img = Image.open(io.BytesIO(data))
+        img_tensor = transform(img).unsqueeze(0).to(device)
 
-            waveform, sample_rate = librosa.load(tmp_path, sr=22050)
-            waveform = torch.from_numpy(waveform).unsqueeze(0)
-            os.unlink(tmp_path)
+        with torch.no_grad():
+            prediction = model(img_tensor)
+            result = prediction.argmax(dim=1).item()
+            return {f'class': classes[result]}
 
-            mel_spec = transform(waveform)
-            mel_spec = mel_spec.mean(dim=0) if mel_spec.dim() == 3 else mel_spec
-            mel_spec = mel_spec.unsqueeze(0).to(device)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'{e}')
 
-            with torch.no_grad():
-                y_prediction = model(mel_spec)
-                prediction = y_prediction.argmax(dim=1).item()
-
-            st.success(f'Модель думает, что это: {classes[prediction]}')
-
-        except Exception as e:
-            st.error(f'Ошибка: {str(e)}')
+if __name__ == '__main__':
+    uvicorn.run(app, host='127.0.0.1', port=8000)
 
 
-
-
-# app = FastAPI()
+# st.title('Audio Genre Classifier')
+# st.text('Загрузите аудио, и модель попробует её распознать.')
 #
-# @app.post('/predict')
-# async def check_image(file:UploadFile = File(...)):
-#     try:
-#         data = await file.read()
-#         if not data:
-#             raise HTTPException(status_code=400, detail='File not Found')
+# mnist_audio = st.file_uploader('Выберите аудио', type=['wav', 'mp3', 'flac', 'ogg'])
 #
-#         img = Image.open(io.BytesIO(data))
-#         img_tensor = transform(img).unsqueeze(0).to(device)
+# if not mnist_audio:
+#     st.info('Загрузите аудио')
+# else:
+#     st.audio(mnist_audio)
 #
-#         with torch.no_grad():
-#             prediction = model(img_tensor)
-#             result = prediction.argmax(dim=1).item()
-#             return {f'class': classes[result]}
+#     if st.button('Распознать'):
+#         try:
+#             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+#                 tmp_file.write(mnist_audio.read())
+#                 tmp_path = tmp_file.name
 #
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f'{e}')
+#             waveform, sample_rate = librosa.load(tmp_path, sr=22050)
+#             waveform = torch.from_numpy(waveform).unsqueeze(0)
+#             os.unlink(tmp_path)
 #
-# if __name__ == '__main__':
-#     uvicorn.run(app, host='127.0.0.1', port=8000)
+#             mel_spec = transform(waveform)
+#             mel_spec = mel_spec.mean(dim=0) if mel_spec.dim() == 3 else mel_spec
+#             mel_spec = mel_spec.unsqueeze(0).to(device)
+#
+#             with torch.no_grad():
+#                 y_prediction = model(mel_spec)
+#                 prediction = y_prediction.argmax(dim=1).item()
+#
+#             st.success(f'Модель думает, что это: {classes[prediction]}')
+#
+#         except Exception as e:
+#             st.error(f'Ошибка: {str(e)}')
