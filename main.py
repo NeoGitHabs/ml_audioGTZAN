@@ -1,25 +1,20 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from torchvision import transforms
-import torchaudio.transforms as T
+from torchaudio import transforms as T
+import torch.nn.functional as F
 import streamlit as st
 from PIL import Image
 import torch.nn as nn
-import torchaudio
-import librosa
+import soundfile as sf
 import numpy as np
-import uvicorn
+import torchaudio
 import tempfile
+import librosa
+import uvicorn
 import torch
 import io
 import os
 
 
-classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
-
-transform = T.MelSpectrogram(
-     sample_rate = 22050,
-     n_mels = 64
-)
 
 class CheckAudio(nn.Module):
     def __init__(self):
@@ -46,29 +41,60 @@ class CheckAudio(nn.Module):
         audio = self.second(audio)
         return audio
 
+
+classes = ['blues', 'classical', 'country', 'disco', 'hiphop', 'jazz', 'metal', 'pop', 'reggae', 'rock']
+index_to_label = {label: ind for ind, label in enumerate(classes)}
+
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 model = CheckAudio()
 model.load_state_dict(torch.load('audioGTZAN.pth', map_location=device))
 model.to(device)
 model.eval()
 
+transform = T.MelSpectrogram(
+     sample_rate = 22050,
+     n_mels = 64
+)
+
+max_len = 500
+
+def change_audio(waveform, sr):
+    if sr != 22050:
+        resample = T.Resample(orig_freq=sr, new_freq=22050)
+        waveform = resample(waveform)
+
+    input_spectrogram = transform(waveform).squeeze(0)
+
+    if input_spectrogram.shape[1] > max_len:
+        input_spectrogram = input_spectrogram[:, :max_len]
+    elif input_spectrogram.shape[1] < max_len:
+        pad_len = max_len - input_spectrogram.shape[1]
+        input_spectrogram = F.pad(input_spectrogram, (0, pad_len))
+
+    return input_spectrogram
+
 
 app = FastAPI()
 
 @app.post('/predict')
-async def check_image(file:UploadFile = File(...)):
+async def predict_audio(file:UploadFile = File(...)):
     try:
         data = await file.read()
         if not data:
-            raise HTTPException(status_code=400, detail='File not Found')
+            raise HTTPException(status_code=400, detail='Пустой файл')
 
-        img = Image.open(io.BytesIO(data))
-        img_tensor = transform(img).unsqueeze(0).to(device)
+        wf, sr = sf.read(io.BytesIO(data), dtype='float')
+        wf = torch.tensor(wf)
+
+        spec = change_audio(wf, sr).unsqueeze(0).to(device)
 
         with torch.no_grad():
-            prediction = model(img_tensor)
-            result = prediction.argmax(dim=1).item()
-            return {f'class': classes[result]}
+            y_pred = model(spec)
+            pred_ind = torch.argmax(y_pred, dim=1).item()
+            pred_class = index_to_label[pred_ind]
+            return {f'Индекс: {pred_ind}, Жанр: {pred_class}'}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'{e}')
